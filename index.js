@@ -18,6 +18,7 @@ var fs = require('fs');
 var nopt = require('nopt');
 var path = require('path');
 var spawn = require('child_process').spawn;
+var Promise = require('promise');
 
 var EOL = require('os').EOL;
 
@@ -39,7 +40,8 @@ var options = nopt(
     'ssh': Boolean,
     'jobs': Number,
     'help': Boolean,
-    'quiet': Boolean
+    'quiet': Boolean,
+    'user': String
   },
   {
     '-b': ['--branch'],
@@ -47,6 +49,7 @@ var options = nopt(
     '-j': ['--jobs'],
     '-?': ['--help'],
     '-h': ['--help'],
+    '-u': ['--user'],
     '-q': ['--quiet']
   }
 );
@@ -105,6 +108,7 @@ function gitWrapper(repo, args, cwd, callback) {
     cwd: cwd,
     stdout: 'ignore'
   });
+
   var operation = args[0];
   // print a nice status message "=== pull foo ==="
   if (!options.quiet) {
@@ -132,13 +136,26 @@ function update(repo, callback) {
     async.apply(gitWrapper, repo, ['pull', '--rebase'], repo.to),
     // if .gitmodules exists, then try to update submodules
     function(callback) {
-      fs.exists(path.join(repo.to, '.gitmodules'), function(exists) {
-        if (exists) {
-          gitWrapper(repo, ['submodule', 'update', '--init', '--recursive'], repo.to, callback);
-        } else {
-          callback();
+      new Promise(function(resolve, reject) {
+        if (!options.user) {
+          resolve();
         }
-      });
+
+        // git remote set-url origin git@github.com:USERNAME/OTHERREPOSITORY.git
+        repo.from = 'https://' + options.user + '@' + repo.from;
+        gitWrapper(repo, ["remote", "set-url", "origin", repo.from], repo.to, function() {
+          resolve();
+        })
+
+      }).then(function() {
+        fs.exists(path.join(repo.to, '.gitmodules'), function(exists) {
+          if (exists) {
+            gitWrapper(repo, ['submodule', 'update', '--init', '--recursive'], repo.to, callback);
+          } else {
+            callback();
+          }
+        });
+      })
     }
   ];
   var branch = repo.branch || options.branch;
@@ -163,7 +180,23 @@ function clone(repo, callback) {
     args.push('-b');
     args.push(branch);
   }
-  gitWrapper(repo, args, path.dirname(repo.to), callback);
+  gitWrapper(repo, args, path.dirname(repo.to), function() {
+      new Promise(function(resolve, reject) {
+        if (!options.user) {
+          resolve();
+        }
+        
+        // git remote set-url origin git@github.com:USERNAME/OTHERREPOSITORY.git
+        repo.from = 'https://' + options.user + '@' + repo.from;
+        gitWrapper(repo, ["remote", "set-url", "origin", repo.from], repo.to, function() {
+          resolve();
+        })
+
+      }).then(function() {
+        callback();
+      })
+
+  });
 }
 
 async.waterfall([
